@@ -6,6 +6,7 @@ import rateLimit from 'express-rate-limit';
 
 import authRoutes from './routes/authRoutes.js';
 import userRoutes from './routes/userRoutes.js';
+import memberRoutes from './routes/memberRoutes.js';
 
 const app = express();
 
@@ -23,8 +24,11 @@ app.use(
 // Public auth endpoints
 app.use('/api/auth', authRoutes);
 
-// Protected user endpoints
+// Protected user endpoints (admin-only)
 app.use('/api/users', userRoutes);
+
+// Protected member endpoints
+app.use('/api/members', memberRoutes);
 
 // Health-check
 app.get('/health', (_req, res) => {

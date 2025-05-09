@@ -1,6 +1,7 @@
-// src/config/redis.ts
-import Redis from 'ioredis';
-const redis = new Redis({
+import IORedis from 'ioredis';
+// ioredis’s ESM export ends up as a module namespace, so we extract the class:
+const RedisClass = IORedis;
+const redis = new RedisClass({
     host: process.env.REDIS_HOST,
     port: Number(process.env.REDIS_PORT),
     password: process.env.REDIS_PASSWORD || undefined,
