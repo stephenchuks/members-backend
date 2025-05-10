@@ -1,4 +1,4 @@
-// src/utils/cache.ts
+
 import redis from '../config/redis.js';
 
 const DEFAULT_TTL = 60 * 5; // 5 minutes
