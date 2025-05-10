@@ -3,13 +3,14 @@ import type { Request, Response, NextFunction } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt, { SignOptions } from 'jsonwebtoken';
 import User, { IUser } from '../models/User.js';
+import Member, { IMember } from '../models/Member.js';
 import {
   accessTokenSecret,
   refreshTokenSecret,
   accessTokenExpiresIn,
   refreshTokenExpiresIn,
 } from '../config/jwt.js';
-import { setCache, getCached } from '../utils/cache.js';
+import { setCache, getCached, clearCache } from '../utils/cache.js';
 
 const { sign, verify } = jwt;
 
@@ -24,18 +25,52 @@ export const register = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const { email, password, role } = req.body;
-    if (!email || !password || !role) {
+    const { email, password, role, membershipType } = req.body as {
+      email: string;
+      password: string;
+      role: IUser['role'];
+      membershipType: IMember['membershipType'];
+    };
+
+    // Basic validation
+    if (!email || !password || !role || !membershipType) {
       res.status(400).json({ message: 'Missing fields' });
       return;
     }
+
     if (await User.findOne({ email })) {
       res.status(409).json({ message: 'Email already in use' });
       return;
     }
+
+    // Create user
     const hashed = await bcrypt.hash(password, 10);
-    await User.create({ email, password: hashed, role });
-    res.status(201).json({ message: 'Registered' });
+    const user = await User.create({ email, password: hashed, role });
+
+    // Decide membership status
+    const now = new Date();
+    const oneYear = new Date(now);
+    oneYear.setFullYear(oneYear.getFullYear() + 1);
+
+    const status = membershipType === 'volunteer' ? 'active' : 'pending';
+
+    // Create corresponding Member
+    const member = await Member.create({
+      membershipType,
+      membershipStartDate: now,
+      membershipExpirationDate: oneYear,
+      status,
+      membershipSource: 'signup',
+      autoRenew: false,
+      related: [],
+    });
+
+    res.status(201).json({
+      message: 'Registered',
+      userId: user.id,
+      membershipID: member.membershipID,
+      membershipStatus: member.status,
+    });
   } catch (err) {
     next(err);
   }
@@ -54,10 +89,7 @@ export const login = async (
       return;
     }
 
-    const payload: JwtPayload = {
-      userId: user.id, // uses Mongoose's string 'id' virtual
-      role: user.role,
-    };
+    const payload: JwtPayload = { userId: user.id, role: user.role };
 
     const accessOpts: SignOptions = {
       expiresIn: accessTokenExpiresIn as SignOptions['expiresIn'],
@@ -110,4 +142,14 @@ export const refreshToken = async (
   } catch {
     res.status(401).json({ message: 'Invalid token' });
   }
+};
+
+export const logout = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  // authenticate middleware sets req.user
+  const { userId } = (req as any).user as JwtPayload;
+  await clearCache(`refresh:${userId}`);
+  res.sendStatus(204);
 };

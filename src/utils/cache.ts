@@ -1,36 +1,58 @@
 // src/utils/cache.ts
 import redis from '../config/redis.js';
 
-export const MEMBERS_CACHE_PREFIX = 'members:';
-const DEFAULT_TTL_SECONDS = 60; // cache duration
+const DEFAULT_TTL = 60 * 5; // 5 minutes
 
 /**
- * Generate a cache key for a members list query.
- * e.g. members:{"page":1,"limit":10}
+ * Store a value under `key` for `ttlSeconds`.
  */
-export function generateMembersCacheKey(query: Record<string, any>): string {
-  // Only include relevant params
-  const { page, limit, status, membershipType } = query;
-  const keyObj: Record<string, any> = { page, limit };
-  if (status) keyObj.status = status;
-  if (membershipType) keyObj.membershipType = membershipType;
-  return MEMBERS_CACHE_PREFIX + JSON.stringify(keyObj);
-}
-
-/** Try to get a cached value by key */
-export async function getCached(key: string): Promise<string | null> {
-  return redis.get(key);
-}
-
-/** Set a cache entry with TTL */
-export async function setCache(key: string, value: string, ttlSeconds = DEFAULT_TTL_SECONDS): Promise<void> {
+export async function setCache(
+  key: string,
+  value: string,
+  ttlSeconds: number = DEFAULT_TTL
+): Promise<void> {
   await redis.set(key, value, 'EX', ttlSeconds);
 }
 
-/** Invalidate all members-list caches */
+/**
+ * Retrieve a cached value, or null if missing.
+ */
+export async function getCached(key: string): Promise<string | null> {
+  return await redis.get(key);
+}
+
+/**
+ * Delete a single cache key.
+ */
+export async function clearCache(key: string): Promise<void> {
+  await redis.del(key);
+}
+
+/**
+ * Generate a consistent key for listing members with given filters/pagination.
+ */
+export function generateMembersCacheKey(params: Record<string, any>): string {
+  // e.g. "members:page=1&limit=5&status=active"
+  const sorted = Object.keys(params)
+    .sort()
+    .map((k) => `${k}=${params[k]}`)
+    .join('&');
+  return `members:${sorted}`;
+}
+
+/**
+ * Invalidate *all* members-list cache entries.
+ * Uses SCAN rather than KEYS to avoid blocking in production.
+ */
 export async function clearMembersCache(): Promise<void> {
-  const keys = await redis.keys(`${MEMBERS_CACHE_PREFIX}*`);
-  if (keys.length > 0) {
-    await redis.del(...keys);
-  }
+  const stream = redis.scanStream({ match: 'members:*', count: 100 });
+  const pipeline = redis.pipeline();
+  stream.on('data', (keys: string[]) => {
+    keys.forEach((k) => pipeline.del(k));
+  });
+  await new Promise<void>((resolve, reject) => {
+    stream.on('end', resolve);
+    stream.on('error', reject);
+  });
+  await pipeline.exec();
 }
