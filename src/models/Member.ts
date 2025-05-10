@@ -11,35 +11,42 @@ export interface IMember extends Document {
   status: string;
   membershipSource: string;
   autoRenew: boolean;
-  related: mongoose.Types.ObjectId[];
+  related: string[];
+  createdAt: Date;
+  updatedAt: Date;
 }
 
-const memberSchema = new Schema<IMember>(
+const MemberSchema = new Schema<IMember>(
   {
-    membershipID: { type: String, required: true, unique: true },
+    membershipID: { type: String, unique: true },
     membershipType: { type: String, required: true },
-    memberSince: { type: Date, required: true, default: Date.now },
+    memberSince: { type: Date, default: Date.now },
     membershipStartDate: { type: Date, required: true },
     membershipExpirationDate: { type: Date, required: true },
     status: { type: String, required: true },
     membershipSource: { type: String, required: true },
     autoRenew: { type: Boolean, default: false },
-    related: [{ type: Schema.Types.ObjectId, ref: 'Member' }],
+    related: { type: [String], default: [] },
   },
   { timestamps: true }
 );
 
-// Pre-validate hook to auto-increment the alphanumeric ID
-memberSchema.pre('validate', async function (next) {
+MemberSchema.pre('validate', async function (next) {
   if (!this.membershipID) {
     const counter = await Counter.findOneAndUpdate(
-      { _id: 'memberID' },
+      { name: 'member' },
       { $inc: { seq: 1 } },
-      { new: true, upsert: true }
+      { upsert: true, new: true }
     );
-    this.membershipID = `MBR${counter.seq.toString().padStart(6, '0')}`;
+    const num = String(counter.seq).padStart(6, '0');
+    this.membershipID = `MBR${num}`;
   }
   next();
 });
 
-export default mongoose.model<IMember>('Member', memberSchema);
+MemberSchema.index({ membershipID: 1 });
+MemberSchema.index({ status: 1 });
+MemberSchema.index({ membershipType: 1 });
+MemberSchema.index({ createdAt: -1 });
+
+export default mongoose.model<IMember>('Member', MemberSchema);

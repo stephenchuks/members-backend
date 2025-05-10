@@ -1,92 +1,93 @@
 // src/controllers/memberController.ts
-import { RequestHandler } from 'express';
-import Member, { IMember } from '../models/Member.js';
+import type { Request, Response, NextFunction } from 'express';
+import { DbService } from '../services/dbService.js';
+import MemberModel, { IMember } from '../models/Member.js';
+import {
+  generateMembersCacheKey,
+  getCached,
+  setCache,
+  clearMembersCache,
+} from '../utils/cache.js';
 
-export const createMember: RequestHandler = async (req, res) => {
-  try {
-    const data = req.body as Partial<Omit<IMember, 'membershipID' | 'memberSince'>>;
-    const member = await Member.create(data);
-    res.status(201).json(member);
-    return;
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: 'Server error' });
-    return;
-  }
-};
+const svc = new DbService<IMember>(MemberModel);
 
-export const getMembers: RequestHandler = async (req, res) => {
+export const getMembers = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { status, membershipType, page = 1, limit = 10 } = req.query as any;
-    const filter: Record<string, any> = {};
+    const { status, membershipType, page = '1', limit = '10' } = req.query as any;
+    const pageNum = Math.max(parseInt(page, 10), 1);
+    const limitNum = Math.max(parseInt(limit, 10), 1);
+    const filter: any = {};
     if (status) filter.status = status;
     if (membershipType) filter.membershipType = membershipType;
-    const skip = (page - 1) * limit;
+
+    const cacheKey = generateMembersCacheKey({ status, membershipType, page: pageNum, limit: limitNum });
+    const cached = await getCached(cacheKey);
+    if (cached) {
+      res.json(JSON.parse(cached));
+      return;
+    }
+
+    const skip = (pageNum - 1) * limitNum;
     const [total, data] = await Promise.all([
-      Member.countDocuments(filter),
-      Member.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
+      svc.count(filter),
+      svc.findAll(filter, { skip, limit: limitNum, sort: { createdAt: -1 } }),
     ]);
-    res.json({ total, page, limit, pages: Math.ceil(total / limit), data });
-    return;
+
+    const result = { total, page: pageNum, limit: limitNum, pages: Math.ceil(total / limitNum), data };
+    await setCache(cacheKey, JSON.stringify(result));
+    res.json(result);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: 'Server error' });
-    return;
+    next(err);
   }
 };
 
-export const getMemberById: RequestHandler = async (req, res) => {
+export const createMember = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { id } = req.params;
-    const member = await Member.findOne({ membershipID: id });
+    const created = await svc.create(req.body as Partial<IMember>);
+    await clearMembersCache();
+    res.status(201).json(created);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const getMemberById = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const member = await svc.findOne({ membershipID: req.params.id });
     if (!member) {
       res.status(404).json({ message: 'Member not found' });
       return;
     }
     res.json(member);
-    return;
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: 'Server error' });
-    return;
+    next(err);
   }
 };
 
-export const updateMember: RequestHandler = async (req, res) => {
+export const updateMember = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { id } = req.params;
-    const update = req.body as Partial<IMember>;
-    const member = await Member.findOneAndUpdate(
-      { membershipID: id },
-      update,
-      { new: true }
-    );
-    if (!member) {
+    const updated = await svc.updateOne({ membershipID: req.params.id }, req.body as Partial<IMember>);
+    if (!updated) {
       res.status(404).json({ message: 'Member not found' });
       return;
     }
-    res.json(member);
-    return;
+    await clearMembersCache();
+    res.json(updated);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: 'Server error' });
-    return;
+    next(err);
   }
 };
 
-export const deleteMember: RequestHandler = async (req, res) => {
+export const deleteMember = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { id } = req.params;
-    const result = await Member.findOneAndDelete({ membershipID: id });
-    if (!result) {
+    const deleted = await svc.deleteOne({ membershipID: req.params.id });
+    if (!deleted) {
       res.status(404).json({ message: 'Member not found' });
       return;
     }
+    await clearMembersCache();
     res.sendStatus(204);
-    return;
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: 'Server error' });
-    return;
+    next(err);
   }
 };

@@ -1,8 +1,10 @@
 // src/routes/memberRoutes.ts
 import { Router } from 'express';
+import { asyncHandler } from '../middleware/asyncHandler.js';
+import { cacheMembersList } from '../middleware/cache.js';
 import {
-  createMember,
   getMembers,
+  createMember,
   getMemberById,
   updateMember,
   deleteMember,
@@ -13,19 +15,10 @@ const router = Router();
 
 router.use(authenticate);
 
-// Create
-router.post('/', authorize(['admin', 'user']), createMember);
-
-// List
-router.get('/', authorize(['admin', 'user']), getMembers);
-
-// Read one
-router.get('/:id', authorize(['admin', 'user']), getMemberById);
-
-// Update
-router.put('/:id', authorize(['admin']), updateMember);
-
-// Delete
-router.delete('/:id', authorize(['admin']), deleteMember);
+router.post('/', authorize(['admin','user']), asyncHandler(createMember));
+router.get('/', authorize(['admin','user']), cacheMembersList, asyncHandler(getMembers));
+router.get('/:id', authorize(['admin','user']), asyncHandler(getMemberById));
+router.put('/:id', authorize(['admin']), asyncHandler(updateMember));
+router.delete('/:id', authorize(['admin']), asyncHandler(deleteMember));
 
 export default router;

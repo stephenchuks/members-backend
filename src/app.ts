@@ -4,13 +4,13 @@ import helmet from 'helmet';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 
+import indexRoutes from './routes/index.js';
 import authRoutes from './routes/authRoutes.js';
-import userRoutes from './routes/userRoutes.js';
 import memberRoutes from './routes/memberRoutes.js';
+import { notFound, errorHandler } from './middleware/error.js';
 
 const app = express();
 
-// Global Middleware
 app.use(helmet());
 app.use(cors());
 app.use(express.json());
@@ -21,18 +21,12 @@ app.use(
   })
 );
 
-// Public auth endpoints
+app.use('/', indexRoutes);
 app.use('/api/auth', authRoutes);
-
-// Protected user endpoints (admin-only)
-app.use('/api/users', userRoutes);
-
-// Protected member endpoints
 app.use('/api/members', memberRoutes);
 
-// Health-check
-app.get('/health', (_req, res) => {
-  res.sendStatus(200);
-});
+// 404 + global error handler
+app.use(notFound);
+app.use(errorHandler);
 
 export default app;
