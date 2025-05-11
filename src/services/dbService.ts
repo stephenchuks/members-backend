@@ -1,40 +1,36 @@
 // src/services/dbService.ts
-import type { Document, Model, FilterQuery, UpdateQuery } from 'mongoose';
+import type { Model, Document, FilterQuery, UpdateQuery } from 'mongoose';
 
 export class DbService<T extends Document> {
-  constructor(protected model: Model<T>) {}
+  constructor(private model: Model<T>) {}
 
-  create(data: Partial<T>): Promise<T> {
-    return this.model.create(data);
-  }
-
-  findAll(
+  async findAll(
     filter: FilterQuery<T>,
     opts: { skip?: number; limit?: number; sort?: any } = {}
-  ): Promise<T[]> {
-    return this.model
+  ): Promise<{ total: number; data: T[] }> {
+    const total = await this.model.countDocuments(filter);
+    const data = await this.model
       .find(filter)
-      .skip(opts.skip ?? 0)
-      .limit(opts.limit ?? 0)
-      .sort(opts.sort);
+      .skip(opts.skip || 0)
+      .limit(opts.limit || 10)
+      .sort(opts.sort || {})
+      .exec();
+    return { total, data };
   }
 
-  count(filter: FilterQuery<T>): Promise<number> {
-    return this.model.countDocuments(filter);
+  async findById(id: string): Promise<T | null> {
+    return this.model.findById(id).exec();
   }
 
-  findOne(filter: FilterQuery<T>): Promise<T | null> {
-    return this.model.findOne(filter);
+  async create(payload: Partial<T>): Promise<T> {
+    return this.model.create(payload);
   }
 
-  updateOne(
-    filter: FilterQuery<T>,
-    update: UpdateQuery<T>
-  ): Promise<T | null> {
-    return this.model.findOneAndUpdate(filter, update, { new: true });
+  async update(id: string, update: UpdateQuery<T>): Promise<T | null> {
+    return this.model.findByIdAndUpdate(id, update, { new: true }).exec();
   }
 
-  deleteOne(filter: FilterQuery<T>): Promise<T | null> {
-    return this.model.findOneAndDelete(filter);
+  async delete(id: string): Promise<T | null> {
+    return this.model.findByIdAndDelete(id).exec();
   }
 }

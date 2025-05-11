@@ -1,14 +1,17 @@
 // src/routes/index.ts
-import { Router } from 'express';
-import swaggerUi from 'swagger-ui-express';
-import swaggerDocument from '../docs/openapi.json' with { type: 'json' };
+import { Router, RequestHandler } from 'express';
 
 const router = Router();
 
-router.get('/health', (_req, res) => {
+const health: RequestHandler = (_req, res) => {
   res.sendStatus(200);
-});
+};
 
-router.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
+const docsStub: RequestHandler = (_req, res) => {
+  res.status(501).json({ message: 'Swagger not set up yet' });
+};
+
+router.get('/health', health);
+router.get('/docs', docsStub);
 
 export default router;

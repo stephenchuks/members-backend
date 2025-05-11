@@ -1,155 +1,118 @@
 // src/controllers/authController.ts
-import type { Request, Response, NextFunction } from 'express';
+import type { RequestHandler } from 'express';
 import bcrypt from 'bcryptjs';
-import jwt, { SignOptions } from 'jsonwebtoken';
-import User, { IUser } from '../models/User.js';
-import Member, { IMember } from '../models/Member.js';
-import {
+import { 
+  jwt,
   accessTokenSecret,
   refreshTokenSecret,
   accessTokenExpiresIn,
-  refreshTokenExpiresIn,
+  refreshTokenExpiresIn
 } from '../config/jwt.js';
-import { setCache, getCached, clearCache } from '../utils/cache.js';
+import User from '../models/User.js';
+import { setCache, getCache, clearCache, blacklistToken } from '../utils/cache.js';
+import type { SignOptions } from 'jsonwebtoken';
 
-const { sign, verify } = jwt;
-
-interface JwtPayload {
-  userId: string;
-  role: IUser['role'];
+interface LoginPayload {
+  email: string;
+  password: string;
 }
 
-export const register = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-): Promise<void> => {
+interface RegisterPayload {
+  email: string;
+  password: string;
+  role?: string;
+}
+
+interface RefreshPayload {
+  refreshToken: string;
+}
+
+export const register: RequestHandler = async (req, res, next): Promise<void> => {
   try {
-    const { email, password, role, membershipType } = req.body as {
-      email: string;
-      password: string;
-      role: IUser['role'];
-      membershipType: IMember['membershipType'];
-    };
-
-    // Basic validation
-    if (!email || !password || !role || !membershipType) {
-      res.status(400).json({ message: 'Missing fields' });
-      return;
-    }
-
-    if (await User.findOne({ email })) {
-      res.status(409).json({ message: 'Email already in use' });
-      return;
-    }
-
-    // Create user
-    const hashed = await bcrypt.hash(password, 10);
-    const user = await User.create({ email, password: hashed, role });
-
-    // Decide membership status
-    const now = new Date();
-    const oneYear = new Date(now);
-    oneYear.setFullYear(oneYear.getFullYear() + 1);
-
-    const status = membershipType === 'volunteer' ? 'active' : 'pending';
-
-    // Create corresponding Member
-    const member = await Member.create({
-      membershipType,
-      membershipStartDate: now,
-      membershipExpirationDate: oneYear,
-      status,
-      membershipSource: 'signup',
-      autoRenew: false,
-      related: [],
-    });
-
-    res.status(201).json({
-      message: 'Registered',
-      userId: user.id,
-      membershipID: member.membershipID,
-      membershipStatus: member.status,
-    });
+    const { email, password, role = 'user' } = req.body as RegisterPayload;
+    const hash = await bcrypt.hash(password, 10);
+    const u = await User.create({ email, password: hash, role });
+    res.status(201).json({ id: u._id, email: u.email, role: u.role });
   } catch (err) {
     next(err);
   }
 };
 
-export const login = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-): Promise<void> => {
+export const login: RequestHandler = async (req, res, next): Promise<void> => {
   try {
-    const { email, password } = req.body;
-    const user = (await User.findOne({ email })) as IUser | null;
+    const { email, password } = req.body as LoginPayload;
+    const user = await User.findOne({ email }).exec();
+    
     if (!user || !(await bcrypt.compare(password, user.password))) {
       res.status(401).json({ message: 'Invalid credentials' });
       return;
     }
 
-    const payload: JwtPayload = { userId: user.id, role: user.role };
-
-    const accessOpts: SignOptions = {
-      expiresIn: accessTokenExpiresIn as SignOptions['expiresIn'],
-    };
-    const refreshOpts: SignOptions = {
-      expiresIn: refreshTokenExpiresIn as SignOptions['expiresIn'],
-    };
-
-    const accessToken = sign(payload, accessTokenSecret, accessOpts);
-    const refreshToken = sign(payload, refreshTokenSecret, refreshOpts);
+    const payload = { userId: String(user._id), role: user.role };
+    const jwtOptions: SignOptions = { expiresIn: accessTokenExpiresIn };
+    
+    // No type assertions needed - types are now locked in config
+    const accessToken = jwt.sign(payload, accessTokenSecret, jwtOptions);
+    const refreshToken = jwt.sign(payload, refreshTokenSecret, { 
+      expiresIn: refreshTokenExpiresIn 
+    });
 
     await setCache(`refresh:${payload.userId}`, refreshToken, 7 * 24 * 3600);
-
     res.json({ accessToken, refreshToken });
   } catch (err) {
     next(err);
   }
 };
 
-export const refreshToken = async (
-  req: Request,
-  res: Response
-): Promise<void> => {
-  const { refreshToken } = req.body;
-  if (!refreshToken) {
-    res.status(400).json({ message: 'Missing token' });
-    return;
-  }
+export const refreshToken: RequestHandler = async (req, res, next): Promise<void> => {
   try {
-    const payload = verify(refreshToken, refreshTokenSecret) as JwtPayload;
-    const stored = await getCached(`refresh:${payload.userId}`);
-    if (stored !== refreshToken) {
+    const { refreshToken: incoming } = req.body as RefreshPayload;
+    const decoded = jwt.decode(incoming) as { userId?: string; role?: string };
+    
+    if (!decoded?.userId) {
+      res.status(400).json({ message: 'Malformed token' });
+      return;
+    }
+
+    const stored = await getCache(`refresh:${decoded.userId}`);
+    if (stored !== incoming) {
       res.status(401).json({ message: 'Invalid refresh token' });
       return;
     }
 
-    const accessOpts: SignOptions = {
-      expiresIn: accessTokenExpiresIn as SignOptions['expiresIn'],
-    };
-    const refreshOpts: SignOptions = {
-      expiresIn: refreshTokenExpiresIn as SignOptions['expiresIn'],
-    };
-
-    const newAccess = sign(payload, accessTokenSecret, accessOpts);
-    const newRefresh = sign(payload, refreshTokenSecret, refreshOpts);
-
-    await setCache(`refresh:${payload.userId}`, newRefresh, 7 * 24 * 3600);
-
-    res.json({ accessToken: newAccess, refreshToken: newRefresh });
-  } catch {
-    res.status(401).json({ message: 'Invalid token' });
+    const newAccess = jwt.sign(
+      { userId: decoded.userId, role: decoded.role },
+      accessTokenSecret,
+      { expiresIn: accessTokenExpiresIn }
+    );
+    
+    res.json({ accessToken: newAccess });
+  } catch (err) {
+    next(err);
   }
 };
 
-export const logout = async (
-  req: Request,
-  res: Response
-): Promise<void> => {
-  // authenticate middleware sets req.user
-  const { userId } = (req as any).user as JwtPayload;
-  await clearCache(`refresh:${userId}`);
-  res.sendStatus(204);
+export const logout: RequestHandler = async (req, res, next): Promise<void> => {
+  try {
+    const header = req.get('Authorization') || '';
+    if (!header.startsWith('Bearer ')) {
+      res.sendStatus(204);
+      return;
+    }
+
+    const token = header.slice(7);
+    const decoded = jwt.decode(token) as { userId?: string; exp?: number };
+    
+    if (decoded?.userId && decoded.exp) {
+      const ttl = decoded.exp - Math.floor(Date.now() / 1000);
+      await clearCache(`refresh:${decoded.userId}`);
+      if (ttl > 0) {
+        await blacklistToken(token, ttl);
+      }
+    }
+    
+    res.sendStatus(204);
+  } catch (err) {
+    next(err);
+  }
 };

@@ -7,15 +7,13 @@ import {
   logout,
 } from '../controllers/authController.js';
 import { authenticate } from '../middleware/auth.js';
+import { asyncHandler } from '../middleware/asyncHandler.js';
 
 const router = Router();
 
-// Public
-router.post('/register', register);
-router.post('/login', login);
-router.post('/refresh', refreshToken);
-
-// Protected
-router.post('/logout', authenticate, logout);
+router.post('/register', asyncHandler(register));
+router.post('/login', asyncHandler(login));
+router.post('/refresh', asyncHandler(refreshToken));
+router.post('/logout', authenticate, asyncHandler(logout));
 
 export default router;

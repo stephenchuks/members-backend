@@ -1,46 +1,46 @@
-import { Request, Response, NextFunction, RequestHandler } from 'express';
+// src/middleware/auth.ts
+import type { Request, Response, NextFunction, RequestHandler } from 'express';
 import jwt from 'jsonwebtoken';
-import { accessTokenSecret } from '../config/jwt.js';
+import { isBlacklisted } from '../utils/cache.js';
 
-interface JwtPayload {
-  userId: string;
-  role: 'user' | 'admin';
-  iat?: number;
-  exp?: number;
+const accessSecret = process.env.JWT_ACCESS_TOKEN_SECRET!;
+
+export interface AuthRequest extends Request {
+  user: { userId: string; role: string };
 }
 
-// Extend Express’s Request type
-declare module 'express-serve-static-core' {
-  interface Request {
-    user?: JwtPayload;
-  }
-}
-
-/** Verify Bearer token and attach payload to req.user */
-export const authenticate: RequestHandler = (req, res, next) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith('Bearer ')) {
-    res.status(401).json({ message: 'Missing or invalid token' });
+export const authenticate: RequestHandler = async (
+  req, res, next
+): Promise<void> => {
+  const header = req.get('Authorization') || '';
+  if (!header.startsWith('Bearer ')) {
+    res.status(401).json({ message: 'Missing token' });
     return;
   }
-  const token = authHeader.slice(7);
+  const token = header.slice(7);
+  if (await isBlacklisted(token)) {
+    res.status(401).json({ message: 'Token revoked' });
+    return;
+  }
   try {
-    const payload = jwt.verify(token, accessTokenSecret) as JwtPayload;
-    req.user = payload;
+    const payload = jwt.verify(token, accessSecret) as any;
+    (req as AuthRequest).user = {
+      userId: String(payload.userId),
+      role: String(payload.role),
+    };
     next();
   } catch {
     res.status(401).json({ message: 'Invalid token' });
-    return;
   }
 };
 
-/** Restrict to specific roles */
-export const authorize = (roles: Array<'user' | 'admin'>): RequestHandler => {
-  return (req, res, next) => {
-    if (!req.user || !roles.includes(req.user.role)) {
+export const authorize =
+  (allowed: string[]): RequestHandler =>
+  (req, res, next) => {
+    const role = (req as AuthRequest).user.role;
+    if (!allowed.includes(role)) {
       res.status(403).json({ message: 'Forbidden' });
       return;
     }
     next();
   };
-};
